@@ -1,0 +1,115 @@
+1. Detailed Implementation for GitLab + Jira (One Project)
+
+Step 1 — Install DevLake
+Deploy via Docker Compose or Helm. This spins up the Config UI (port 4000), API server, MySQL, and Grafana together.
+
+Step 2 — Configure the GitLab Connection
+
+Go to Config UI → Connections → Add GitLab
+Choose GitLab Cloud or GitLab Server (v11+); Cloud endpoint is fixed at https://gitlab.com/api/v4/, Server endpoint looks like https://gitlab.example.com/api/v4/
+Provide a Personal Access Token with read_api scope
+Important permission check: your GitLab role on the target project must be above Guest — Guest-level access silently blocks data collection
+Test Connection → Save Connection
+Add Data Scope: search and select your project's repository (GitLab API requires 2+ characters to search)
+Add Scope Config (optional but important): choose which entities to collect — Issue Tracking, Source Code Management, Code Review, CI/CD, Cross Domain. For DORA metrics specifically, configure the CI/CD deployment regex — a regular expression that tells DevLake which GitLab pipeline/job names count as a "deployment" (e.g., .*build-image.* or (release.*|main) for branch-based detection), plus an optional second regex to isolate production deployments specifically.
+
+Step 3 — Configure the Jira Connection
+
+Add Jira connection: for Jira Cloud, endpoint is https://<yourdomain>.atlassian.net/rest/, authenticated via email + API token; for Jira Server/Data Center, use username/password or a Personal Access Token
+Add Data Scope: select the Jira board(s) for your project
+Add Scope Config — this step is not optional if you want full dashboard functionality:
+Issue Type mapping: map your Jira issue types to DevLake's three standard types — REQUIREMENT, BUG, INCIDENT
+Story Point field mapping: map your custom Jira "Story Points" field to DevLake's story-point field — required for velocity and story-point-based metrics
+Epic Key mapping
+Remotelink Commit SHA regex: parses commit links from Jira issues so DevLake can connect issues to code changes (use /commit/([0-9a-f]{40})$ as the standard pattern)
+Without this scope config, several charts in the Jira and "Engineering Throughput and Cycle Time" dashboards won't render at all
+
+Step 4 — Create a Project and Link Both Connections
+
+Go to Projects → Create a new project (this is the container that ties GitLab + Jira data together for one application)
+Add the GitLab connection to this project, selecting the specific repo
+Add the Jira connection, selecting the specific board
+Set Sync Policy: Data Time Range (default: past 6 months — this becomes your baseline window), Sync Frequency (manual for a pilot, or cron-scheduled for ongoing), and whether to skip failed sub-tasks
+Click Collect Data — monitor progress under the Status tab
+
+Step 5 — Validate
+Once collection completes, spot-check that commits, MRs, and Jira issues are appearing correctly correlated before trusting the dashboard output.
+
+2. Configuring the Grafana Dashboard
+Access Grafana at http://localhost:3002 (default login: admin / admin — change this immediately in any real deployment)
+DevLake ships pre-built dashboards out of the box, including the DORA dashboard, Engineering Throughput and Cycle Time, and per-data-source dashboards — no need to build from scratch
+To view all dashboards: sidebar → Manage, or visit /dashboards
+To customize a panel: click the panel's top bar → Edit. This opens:
+The Query Builder, where each panel's chart is backed by an editable SQL query against DevLake's MySQL database — you can rewrite these to match your organization's specific definitions
+The Parameter Sidebar, where you control chart type, legends, and styling
+To persist a customized dashboard: Dashboard Settings → JSON Model → copy the JSON → save it as a .json file in the /grafana/dashboards/ folder in your DevLake deployment repo, so it reloads automatically on restart
+To import a previously-exported dashboard: use the Import icon → Upload JSON file → rename if there's a UID conflict
+Troubleshooting data connection: if charts show no data, check ./grafana/datasources/datasource.yml for correct database, user, and password values
+3. What Metrics Can Be Calculated
+
+DevLake provides a documented library of pre-built metrics, grouped into these categories:
+
+Category	Metrics
+Requirements (Jira)	Requirement Count, Requirement Lead Time, Requirement Delivery Rate, Requirement Granularity
+Quality	Bug Age, Bug Count per 1k Lines of Code, Incident Age, Incident Count per 1k Lines of Code
+Code Activity (GitLab)	Commit Count, Commit Author Count, Added/Deleted Lines of Code
+Pull/Merge Requests	PR Count, PR Cycle Time, PR Coding Time, PR Pickup Time, PR Review Time, PR Deploy Time, PR Time to Merge, PR Merge Rate, PR Review Depth, PR Size
+CI/CD	Build Count, Build Duration, Build Success Rate
+DORA (the core 4)	Deployment Frequency, Median Lead Time for Changes, Failed Deployment Recovery Time, Median Time to Restore Service, Change Failure Rate
+Code Quality (if SonarQube connected)	Code Quality Issue Count, Maintainability Debt, Duplicated Blocks/Lines
+
+PR Cycle Time specifically is defined as: PR Coding Time + PR Time-to-Merge + PR Deploy Time — the full span from first commit to production deployment.
+
+4. Using Throughput & Cycle Time for Engineering Efficiency
+
+The core relationship: Cycle Time tells you how long one unit of work takes; Throughput tells you how much work moves through in a given period. Together they reveal whether AI is genuinely accelerating delivery or just shifting where the time goes.
+
+Step 1 — Establish the baseline (pre-AI)
+Pull PR Cycle Time and story-point throughput (via Requirement Delivery Rate + Commit Count) for a defined historical window — this is your anchor comparison point, same principle as the anchor-story baseline we set up earlier.
+
+Step 2 — Track the same metrics in the AI-assisted period
+Same PR Cycle Time formula, same throughput calculation, now measured after AI tooling is introduced — ideally with AI-tagged commits/PRs so you can isolate AI-assisted from non-AI-assisted work in the same time window, not just a before/after date split.
+
+Step 3 — Calculate efficiency gain
+
+Cycle Time Efficiency Gain % = (Baseline PR Cycle Time − AI-Period PR Cycle Time) / Baseline × 100
+Throughput Gain % = (AI-Period Story Points Delivered − Baseline) / Baseline × 100
+
+Step 4 — Cross-check the two together before declaring a win
+This is the critical discipline: cycle time dropping alone isn't proof of efficiency — check it against PR Size and PR Review Depth. If cycle time fell because PRs got smaller/shallower (less gets reviewed), that's a quality risk, not a genuine gain. Similarly, throughput rising alone isn't proof either — check Bug Count per 1k LOC and Change Failure Rate in the same window. Rising throughput with rising defect rate means AI is trading speed for quality, not creating real efficiency.
+
+Step 5 — Roll into the DORA lens for leadership reporting
+Deployment Frequency and Lead Time for Changes (the two DORA "velocity" metrics) combined with Change Failure Rate and MTTR (the two "stability" metrics) give a leadership-ready, industry-benchmarked view (Elite/High/Medium/Low) that resists the "is this actually good?" pushback, since DORA benchmarks are externally validated rather than self-defined.
+
+Now let me build the two slides.
+
+Architected DevLake DORA visualization with integrated data sources and dashboards
+Architected DevLake DORA visualization with integrated data sources and dashboards
+
+Good, it exists. Let's build and validate.
+
+Verifying slide layouts and preventing element collisions
+Verifying slide layouts and preventing element collisions
+
+Found a vertical overlap on Slide B (categories column runs into the bottom banner). Let me fix the spacing.
+
+Tighten category row spacing to prevent overlap with bottom banner
+Tighten category row spacing to prevent overlap with bottom banner
+
+Let's recompute and verify the fix, then rebuild:
+
+Verify the fix clears the banner
+Verify the fix clears the banner
+
+Good, clears with 0.43in margin. Rebuild and validate:
+
+Ran 3 commands, viewed 2 files, read a file
+Ran 3 commands, viewed 2 files, read a file
+
+Two slides, same theme:
+
+Slide 1 — Pictorial: 5-step flow (Connect GitLab+Jira → Scope Config → Create Project → Collect Data → Grafana Dashboard) with the correlation logic and key permission/config reminders (GitLab role above Guest, story-point field mapping, deployment regex) called out below.
+
+Slide 2 — Metrics + Throughput/Cycle Time: left column groups all calculable metrics by category (Requirements, Quality, Code Activity, PR/MR, CI/CD, DORA Core 4); right column shows the efficiency formula plus three guardrail checks to run before declaring a win (review depth stability, defect rate stability, same-period AI-vs-non-AI comparison), closing with the DORA benchmark framing for external credibility.
+
+The detailed text answer above covers all four of your original points in full implementation depth — happy to turn any single section (e.g., the GitLab scope-config regex patterns) into a standalone how-to doc if your team needs something more copy-paste-ready for the actual setup.
